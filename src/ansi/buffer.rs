@@ -7,6 +7,8 @@
 
 use bytes::{Bytes, BytesMut};
 
+use crate::{Error, Result};
+
 /// A thin wrapper around [`bytes::BytesMut`] that is able to determine visual string size.
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Debug, Clone, Default)]
@@ -40,11 +42,28 @@ impl Buffer {
         Self(BytesMut::with_capacity(capacity))
     }
 
+    /// Below is the old description left for posterity. Currently this only uses the `unicode`
+    /// variation of the 2 visible length functions since I'm afraid the ascii version won't be
+    /// as accurate. I'm leaving both here in case I change my mind on this later. While comparing
+    /// the two functions in a simple test function i got the following results:
+    /// - 47 Characters Total, 6 Visible
+    ///   - `visible_length_ascii`: 1.2µs average
+    ///   - `visible_length_unicode`: 1.8µs average
+    /// - 80 Characters Total, 47 Visible
+    ///   - `visible_length_ascii`: 2.02µs average
+    ///   - `visible_length_unicode`: 3.57µs average
+    /// - 179 Characters Total, 124 Visible
+    ///   - `visible_length_ascii`: 4.268µs average
+    ///   - `visible_length_unicode`: 7.943µs average
+    ///
     /// Calculates the "visible" size of the internal buffer / string, ignoring any ANSI
     /// escape sequences that will not be visible in a terminal. Internally, the function
     /// delegates to [`Buffer::visible_len_ascii`] or [`Buffer::visible_len_unicode`] depending
     /// on the value of [`Buffer::is_ascii`]. Unfortunately this *does* mean that the internal
     /// buffer is looped through twice.
+    ///
+    /// ## Errors
+    /// - `crate::Error::Utf8` if the conversion from bytes to `&str` fails.
     ///
     /// # Examples
     /// ```
@@ -60,18 +79,11 @@ impl Buffer {
     /// assert_eq!(buffer.len(), 35);
     /// assert_eq!(buffer.visible_len(), "Hello World!".len());
     /// ```
-    #[must_use]
-    pub fn visible_len(&self) -> usize {
-        if self.is_ascii() {
-            println!("Using ascii version.");
-            self.visible_len_ascii()
-        } else {
-            println!("Using unicode version.");
-            self.visible_len_unicode()
-        }
+    pub fn visible_len(&self) -> Result<usize> {
+        self.visible_len_unicode()
     }
 
-    fn visible_len_ascii(&self) -> usize {
+    fn visible_len_ascii(&self) -> Result<usize> {
         let mut count = 0usize;
         let mut toggle = false;
 
@@ -95,27 +107,16 @@ impl Buffer {
             }
         }
 
-        count
+        Ok(count)
     }
 
-    fn visible_len_unicode(&self) -> usize {
+    fn visible_len_unicode(&self) -> Result<usize> {
         let mut count = 0usize;
         let mut toggle = false;
 
-        let string = match self.to_str() {
-            Some(s) => s,
-            None => return 0,
-        };
+        let string = self.to_str()?;
 
         for ch in string.chars() {
-            let b = ch as u8;
-            // println!(
-            //     "Byte '{:x}' Char '{}' Count = {} Toggle = {}",
-            //     b,
-            //     ch,
-            //     count,
-            //     if toggle { "ON" } else { "OFF" }
-            // );
             if ch == super::MARKER {
                 toggle = true;
             } else if toggle {
@@ -127,7 +128,7 @@ impl Buffer {
             }
         }
 
-        count
+        Ok(count)
     }
 
     /// Adds the given string slice to the internal buffer.
@@ -215,6 +216,9 @@ impl Buffer {
 
     /// Attempts to create a string from the value of the internal buffer.
     ///
+    /// ## Errors
+    /// - `crate::Error::Utf8` if the conversion from bytes to `&str` fails.
+    ///
     /// # Examples
     /// ```
     /// # use reflors::ansi::buffer::Buffer;
@@ -222,9 +226,8 @@ impl Buffer {
     /// buffer.push_str("Hello");
     /// assert_eq!(buffer.to_str(), Some("Hello"));
     /// ```
-    #[must_use]
-    pub fn to_str(&self) -> Option<&str> {
-        std::str::from_utf8(self.0.as_ref()).ok()
+    pub fn to_str(&self) -> Result<&str> {
+        std::str::from_utf8(self.0.as_ref()).map_err(Error::from)
     }
 
     /// Attempts to create a string from the value of the internal buffer.
@@ -252,6 +255,9 @@ impl Buffer {
 
     /// Attempts to create an owned [`String`] from the current value of the internal buffer.
     ///
+    /// ## Errors
+    /// - `crate::Error::Utf8` if the conversion from bytes to `String` fails.
+    ///
     /// # Examples
     /// ```
     /// # use reflors::ansi::buffer::Buffer;
@@ -259,9 +265,8 @@ impl Buffer {
     /// buffer.push_str("Hello");
     /// assert_eq!(buffer.to_string(), Some("Hello".to_string()));
     /// ```
-    #[must_use]
-    pub fn to_string(&self) -> Option<String> {
-        String::from_utf8(self.0.to_vec()).ok()
+    pub fn to_string(&self) -> Result<String> {
+        String::from_utf8(self.0.to_vec()).map_err(Error::from)
     }
 
     /// Attempts to create an owned [`String`] from the value of the internal buffer.
@@ -319,7 +324,10 @@ impl Buffer {
 
     /// Consumes this [`Buffer`] and attempts to create a `String` from the contents.
     ///
-    /// # Examples
+    /// ## Errors
+    /// - `crate::Error::Utf8` if the conversion from bytes to `String` fails.
+    ///
+    /// ## Examples
     /// ```
     /// # use reflors::ansi::buffer::Buffer;
     /// let buffer = Buffer::from("Hello");
@@ -327,10 +335,9 @@ impl Buffer {
     /// assert!(string.is_some());
     /// assert_eq!(string, Some("Hello".to_string()));
     /// ```
-    #[must_use]
-    pub fn into_string(self) -> Option<String> {
+    pub fn into_string(self) -> Result<String> {
         let data = self.into_vec();
-        String::from_utf8(data).ok()
+        String::from_utf8(data).map_err(Error::from)
     }
 
     /// Checks if the internal buffer contains only valid ascii characters.
@@ -394,6 +401,24 @@ impl Buffer {
     #[must_use]
     pub fn capacity(&self) -> usize {
         self.0.capacity()
+    }
+
+    /// Creates a new [`String`] from the current value of the buffer, truncating the
+    /// last `len` **visible** characters.
+    ///
+    /// ## Errors
+    /// - If the current buffer is not valid utf8.
+    ///
+    /// ## Panics
+    /// - Because it is not written.
+    pub fn truncate_visible(&mut self, len: usize) -> Result<String> {
+        let current = self.visible_len()?;
+        if current <= len {
+            todo!();
+        }
+
+        let to_remove = current - len;
+        todo!("ansi::Buffer::truncate_visible not implemented!");
     }
 }
 
@@ -576,7 +601,7 @@ mod tests {
     fn basic() {
         let b: Buffer = "Hello!".into();
         assert_eq!(b.len(), 6, "Buffer length should be 6");
-        assert_eq!(b.visible_len(), 6, "Buffer visible length should be 6");
+        assert_eq!(b.visible_len(), Ok(6), "Buffer visible length should be 6");
         assert!(b.is_ascii(), "Buffer should be ASCII");
     }
 
@@ -584,12 +609,12 @@ mod tests {
     fn ansi() {
         let b: Buffer = "\u{1b}[1;4;38;2;255;255mHello!\u{1b}[0m".into();
         assert_eq!(b.len(), 29, "Buffer length should be 29");
-        assert_eq!(b.visible_len(), 6, "Buffer visible length should be 6");
+        assert_eq!(b.visible_len(), Ok(6), "Buffer visible length should be 6");
         assert!(b.is_ascii(), "Buffer should be ASCII");
 
         let b: Buffer = "\u{1b}[1;4;38;2;255;255m_Hello!_\u{1b}[0m".into();
         assert_eq!(b.len(), 31, "Buffer length should be 31");
-        assert_eq!(b.visible_len(), 8, "Buffer visible length should be 8");
+        assert_eq!(b.visible_len(), Ok(8), "Buffer visible length should be 8");
         assert!(b.is_ascii(), "Buffer should be ASCII");
     }
 
@@ -599,24 +624,92 @@ mod tests {
         let b2: Buffer = "\u{1b}[1;4;38;2;255;255m🤔\u{1b}[0m".into();
         assert_eq!(char::len_utf8('🤔'), 4, "🤔 should be 4 bytes");
         assert_eq!(b1.len(), 4, "Buffer length should be 4");
-        assert_eq!(b1.visible_len(), 4, "Buffer visible length should be 4");
+        assert_eq!(b1.visible_len(), Ok(4), "Buffer visible length should be 4");
         assert_eq!(b2.len(), 27, "Buffer length should be 27");
-        assert_eq!(b2.visible_len(), 4, "Buffer visible length should be 4");
+        assert_eq!(b2.visible_len(), Ok(4), "Buffer visible length should be 4");
         assert_eq!(b1.visible_len(), b2.visible_len());
 
         let b1: Buffer = "東京".into();
         let b2: Buffer = "\u{1b}[1;4;38;2;255;255m東京\u{1b}[0m".into();
         assert_eq!(b1.len(), 6, "Buffer length should be 6");
-        assert_eq!(b1.visible_len(), 6, "Buffer visible length should be 6");
+        assert_eq!(b1.visible_len(), Ok(6), "Buffer visible length should be 6");
         assert_eq!(b2.len(), 29, "Buffer length should be 29");
-        assert_eq!(b2.visible_len(), 6, "Buffer visible length should be 6");
+        assert_eq!(b2.visible_len(), Ok(6), "Buffer visible length should be 6");
         assert_eq!(b1.visible_len(), b2.visible_len());
     }
 
     #[test]
     fn single() {
         let b2: Buffer = "\u{1b}[1;4;38;2;255;255m🤔\u{1b}[0m".into();
-        assert_eq!(b2.visible_len(), 4, "Buffer visible length should be 4");
+        assert_eq!(b2.visible_len(), Ok(4), "Buffer visible length should be 4");
         assert!(!b2.is_ascii(), "Buffer should be ASCII");
+    }
+
+    #[test]
+    fn boom() {
+        let ch = '🤔';
+        let u = ch as u8;
+        let u2 = ch as u32;
+        let ch2 = u as char;
+        let ch3 = unsafe { char::from_u32_unchecked(u2) };
+        println!(
+            "u '{}' u2 '{}' ch '{}' ch2 '{}' ch3 '{}'",
+            u, u2, ch, ch2, ch3
+        );
+        let text = "\u{1b}[1;4;38;2;255;255mHello World!\u{1b}[0m";
+        println!("{}", text);
+        println!("Text length: {}", text.len());
+    }
+
+    #[test]
+    #[allow(clippy::needless_range_loop, clippy::cast_possible_truncation)]
+    fn visible_len_compare() {
+        const ITERS: usize = 1_000_000;
+        const SHORT: bool = false;
+        const EXPECTED: usize = if SHORT { 12 } else { 124 };
+
+        let buffer: Buffer = if SHORT {
+            // 45 total, 12 visible
+            "\u{1b}[1;4;38;2;255;255mHello world!\u{1b}[0m".into()
+        } else {
+            // 180 total, 124 visible
+            "\u{1b}[1;4;38;2;255;255mHello world, how are you? It's nice to meet ya! \u{1b}[1;4;38;2;2;255mMy name is Tony and I think we're going to have a lot of fun! Die in a fire!\u{1b}[0m"
+                .into()
+        };
+
+        let mut results_ascii = vec![0usize; ITERS];
+        let mut results_uni = vec![0usize; ITERS];
+
+        let now = std::time::Instant::now();
+        for i in 0..ITERS {
+            results_ascii[i] = buffer.visible_len_ascii().unwrap();
+        }
+        let elapsed_ascii = now.elapsed();
+        let average_ascii = elapsed_ascii / ITERS as u32;
+
+        let now = std::time::Instant::now();
+        for i in 0..ITERS {
+            results_uni[i] = buffer.visible_len_unicode().unwrap();
+        }
+        let elapsed_uni = now.elapsed();
+        let average_uni = elapsed_uni / ITERS as u32;
+
+        for (i, result) in results_ascii.iter().enumerate() {
+            assert_eq!(*result, EXPECTED, "Ascii Iteration {}", i);
+        }
+
+        for (i, result) in results_uni.iter().enumerate() {
+            assert_eq!(*result, EXPECTED, "  Uni Iteration {}", i);
+        }
+
+        println!("Using {} Iterations...", ITERS);
+        println!(
+            "\tAscii Version took {:?} ({:?} average)",
+            elapsed_ascii, average_ascii
+        );
+        println!(
+            "\t  Uni Version took {:?} ({:?} average)",
+            elapsed_uni, average_uni
+        );
     }
 }

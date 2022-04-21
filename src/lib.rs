@@ -41,6 +41,11 @@
     clippy::unnecessary_wraps
 )]
 
+/// Re-export of the `bytes` crate which is used throughout the library.
+pub mod bytes {
+    pub use bytes::*;
+}
+
 mod error;
 pub use error::{Error, Result};
 
@@ -71,6 +76,11 @@ pub mod dedent;
 ///
 /// Source: [muesli/reflow/indent](https://github.com/muesli/reflow/indent/)
 pub mod indent;
+
+/// # `iter` Module
+///
+/// Contains useful iterators for dealing with ansi-aware strings and bytes.
+pub mod iter;
 
 /// # `margin` Module
 ///

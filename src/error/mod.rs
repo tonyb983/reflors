@@ -89,6 +89,33 @@ impl std::fmt::Display for Error {
     }
 }
 
+impl Clone for Error {
+    fn clone(&self) -> Self {
+        match self {
+            Error::Format(err) => Error::Format(*err),
+            Error::Io(err) => Error::Io(IoError::new(err.kind(), err.to_string())),
+            Error::Utf8(err) => Error::Utf8(*err),
+            Error::Other(err) => Error::Other(err.clone()),
+        }
+    }
+}
+
+impl PartialEq for Error {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Error::Format(err), Error::Format(err2)) => err == err2,
+            (Error::Io(err), Error::Io(err2)) => {
+                err.kind() == err2.kind() && err.to_string() == err2.to_string()
+            }
+            (Error::Utf8(err), Error::Utf8(err2)) => err == err2,
+            (Error::Other(err), Error::Other(err2)) => err == err2,
+            _ => false,
+        }
+    }
+}
+
+impl Eq for Error {}
+
 impl std::error::Error for Error {}
 
 /// Result type used by [`Writer`].
