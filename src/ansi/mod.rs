@@ -14,6 +14,7 @@ pub fn is_terminator(ch: char) -> bool {
 /// Returns the **visble** width of the given string, ignoring ansi escape sequences.
 ///
 /// TODO: Figure out how to handle '\n' in this function (and in general)
+#[must_use]
 pub fn visible_width(input: &str) -> usize {
     let mut count = 0usize;
     let mut in_ansi_seq = false;
