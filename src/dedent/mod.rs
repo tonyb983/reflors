@@ -1,11 +1,8 @@
+use std::io::Write;
+
 use bytes::BufMut;
 
-/// Errors that can occur during the deduction or stripping process.
-#[derive(Debug)]
-pub enum Error {}
-
-/// Result type returned by functions in the `dedent` module.
-pub type Result<T> = std::result::Result<T, Error>;
+use crate::{Error, Result};
 
 /// Detects the indentation level that is shared amongst all lines in the
 /// given text and removes it.
@@ -44,6 +41,16 @@ pub fn dedent_in_place(input: &mut String) -> Result<()> {
     }
 
     *input = dedent_impl(input, indent)?;
+    Ok(())
+}
+
+/// Detects indentation level, removes it, and writes the result to the buffer given.
+///
+/// ## Errors
+/// - `crate::Error::Io(std::io::Error)` if an I/O error occurs.
+pub fn dedent_to<W: std::io::Write>(input: &str, out: &mut W) -> Result<()> {
+    let output = dedent_str(input)?;
+    out.write_all(output.as_bytes())?;
     Ok(())
 }
 
@@ -137,6 +144,18 @@ blah blah blah blah blah
 blah blah blah blah blah 
     blah blah blah blah blah blah "#
         );
+        assert_eq!(output, output2);
+    }
+
+    #[test]
+    fn basic_tabs() {
+        #[rustfmt::skip]
+        const TEXT: &str = "\tBlah blah blah blah blah blah blah blah\n\tblah blah blah blah blah blah\n\tblah blah blah blah blah blah blah blah\n\tblah blah blah blah blah\n\tblah blah blah blah blah blah";
+        const EXPECTED: &str = "Blah blah blah blah blah blah blah blah\nblah blah blah blah blah blah\nblah blah blah blah blah blah blah blah\nblah blah blah blah blah\nblah blah blah blah blah blah";
+        let output = dedent_str(TEXT).unwrap();
+        let output2 = dedent_string(TEXT.to_string()).unwrap();
+        assert_eq!(output, EXPECTED);
+        assert_eq!(output2, EXPECTED);
         assert_eq!(output, output2);
     }
 }

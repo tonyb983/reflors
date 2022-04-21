@@ -1,5 +1,5 @@
-mod buffer;
-mod writer;
+pub mod buffer;
+pub mod writer;
 
 /// Marker for the start of an ansi escape code.
 pub const MARKER: char = '\u{1b}';
@@ -16,22 +16,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn width_tester() {
-        let input = "\u{1b}[1;4;38;2;255;255mHello!\u{1b}[0m";
-        let detected = unicode_width::UnicodeWidthStr::width(input);
-        println!("The width of '{}' is {}", input, detected);
-        assert_eq!(detected, 6);
-    }
-
-    #[test]
     fn terminator_tester() {
         for u in 0x40..=0x5au8 {
-            let ch = u as char;
-            println!("Value '{:x}' is character '{}'", u, ch);
+            // let ch = u as char;
+            // println!("Value '{:x}' is character '{}'", u, ch);
+            assert!(is_terminator(u as char));
         }
         for u in 0x61..=0x7au8 {
-            let ch = u as char;
-            println!("Value '{:x}' is character '{}'", u, ch);
+            // let ch = u as char;
+            // println!("Value '{:x}' is character '{}'", u, ch);
+            assert!(is_terminator(u as char));
         }
     }
 }
